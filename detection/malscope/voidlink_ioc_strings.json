@@ -1,0 +1,174 @@
+{
+  "schema": "malscope-ioc-strings/v1",
+  "description": "VoidLink string-based IOCs for Malscope StaticAnalyzer suspicious_indicators",
+  "reference": [
+    "https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits",
+    "https://research.checkpoint.com/2026/voidlink-the-cloud-native-malware-framework/"
+  ],
+  "string_groups": [
+    {
+      "group": "c2_endpoints",
+      "description": "VoidLink C2 protocol endpoint paths hardcoded in beacon binary",
+      "severity": "critical",
+      "weight": 80,
+      "match_policy": "any_2_of_group",
+      "strings": [
+        "/api/v2/handshake",
+        "/api/v2/sync",
+        "/api/v2/heartbeat",
+        "/stage1.bin",
+        "/implant.bin",
+        "/compile",
+        "/api/v2/kill"
+      ],
+      "mitre": "T1071.001",
+      "note": "Any 2 of these paths in a single binary is a strong indicator of VoidLink C2 client code."
+    },
+    {
+      "group": "process_masquerade_names",
+      "description": "Kernel thread name strings used by VoidLink's prctl masquerade technique",
+      "severity": "high",
+      "weight": 65,
+      "match_policy": "any_1_of_group",
+      "strings": [
+        "[kworker/0:0]",
+        "[kworker/0:1]",
+        "[kworker/u8:0]",
+        "[kworker/u16:0]",
+        "migration/0",
+        "watchdog/0",
+        "rcu_sched",
+        "[ksoftirqd/0]"
+      ],
+      "mitre": "T1036.004",
+      "note": "These names appearing in a user-space binary (not a kernel module) indicate process masquerade. Kernel threads would not contain their own names as string literals."
+    },
+    {
+      "group": "voidstream_protocol",
+      "description": "VoidStream encryption and camouflage protocol strings",
+      "severity": "critical",
+      "weight": 90,
+      "match_policy": "any_1_of_group",
+      "strings": [
+        "VoidStream",
+        "VoidLink",
+        ".vl_"
+      ],
+      "mitre": "T1573.001",
+      "note": "VoidLink-family specific strings. Negligible false positive rate."
+    },
+    {
+      "group": "http_camouflage_markers",
+      "description": "HTTP camouflage content-type strings used by VoidLink to disguise C2 traffic as image/script/style data",
+      "severity": "high",
+      "weight": 45,
+      "match_policy": "any_2_of_group",
+      "strings": [
+        "image/png",
+        "application/javascript",
+        "text/css",
+        "font-data:",
+        "var _0x=",
+        "<!-- ",
+        "IDAT"
+      ],
+      "mitre": "T1001.001",
+      "note": "Multiple HTTP content-type strings in a non-web-server binary indicates camouflage parsing code."
+    },
+    {
+      "group": "security_product_names",
+      "description": "EDR/security tool names VoidLink enumerates to detect analysis environments",
+      "severity": "high",
+      "weight": 55,
+      "match_policy": "any_3_of_group",
+      "strings": [
+        "falcon-sensor",
+        "SentinelAgent",
+        "cbagentd",
+        "falco",
+        "sysdig",
+        "wazuh-agent",
+        "ossec",
+        "osqueryd",
+        "auditd",
+        "clamd",
+        "AliYunDun",
+        "frida-server"
+      ],
+      "mitre": "T1518.001",
+      "note": "3+ security tool names in a binary indicates deliberate EDR enumeration code."
+    },
+    {
+      "group": "fileless_execution_strings",
+      "description": "Strings associated with VoidLink's fileless memory execution technique",
+      "severity": "critical",
+      "weight": 85,
+      "match_policy": "any_2_of_group",
+      "strings": [
+        "memfd_create",
+        "execveat",
+        "MFD_CLOEXEC",
+        "AT_EMPTY_PATH",
+        "/proc/self/fd/",
+        "memfd:",
+        "PHANTOM_LINK_SIMULATED_PAYLOAD"
+      ],
+      "mitre": "T1027.011",
+      "note": "memfd_create + execveat together confirm fileless execution capability."
+    },
+    {
+      "group": "beaconing_timing_constants",
+      "description": "VoidLink adaptive beaconing interval strings (aggressive: 4096ms, paranoid: 1024ms)",
+      "severity": "medium",
+      "weight": 30,
+      "match_policy": "any_1_of_group",
+      "strings": [
+        "aggressive",
+        "paranoid",
+        "ai-cadence",
+        "beacon_loop",
+        "voidlink_sequence"
+      ],
+      "mitre": "T1071",
+      "note": "Beaconing profile names present in binary indicate C2 communication scheduling code."
+    },
+    {
+      "group": "anti_analysis_strings",
+      "description": "Anti-debug and environment detection strings",
+      "severity": "high",
+      "weight": 40,
+      "match_policy": "any_1_of_group",
+      "strings": [
+        "TracerPid",
+        "tracer_pid",
+        "/proc/self/status",
+        "debugger_detected",
+        "dry-run-session"
+      ],
+      "mitre": "T1622",
+      "note": "TracerPid in /proc/self/status is specifically used by VoidLink for anti-debugging detection."
+    },
+    {
+      "group": "aes_gcm_encryption",
+      "description": "AES-256-GCM encryption implementation strings (VoidStream protocol encryption)",
+      "severity": "high",
+      "weight": 35,
+      "match_policy": "any_2_of_group",
+      "strings": [
+        "AES-256-GCM",
+        "de-voidlink-test-key",
+        "VOIDLINK_SECRET",
+        "nonce",
+        "gcm_tag"
+      ],
+      "mitre": "T1573.001"
+    }
+  ],
+  "scoring": {
+    "description": "Composite IOC scoring for Malscope suspicious_indicators output",
+    "threshold_suspicious": 50,
+    "threshold_malicious": 120,
+    "threshold_confirmed_voidlink": 200,
+    "note": "Sum the weight of all matched string groups. A score >= 120 should trigger MALICIOUS classification."
+  }
+}

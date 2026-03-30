@@ -1,0 +1,146 @@
+title: VoidLink eBPF Rootkit Hook Attachment
+id: e5f6a7b8-c9d0-1234-efab-345678901234
+status: experimental
+description: |
+  Detects suspicious eBPF program loading that matches VoidLink's rootkit behavior.
+  VoidLink attaches BPF kprobes/kretprobes to syscalls used for process, file,
+  and network hiding:
+  - getdents64 (directory listing hiding)
+  - tcp4_seq_show, tcp6_seq_show, udp4_seq_show (network connection hiding)
+  - netlink_recvmsg (netlink socket hiding)
+  - inet_sk_diag_fill (ss/netstat hiding)
+  - vfs_read (file content hiding)
+  Also detects VoidLink-specific BPF map names: sd_nl_ports, sd_cg_pids, sd_cg_names.
+references:
+  - https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits
+author: de-voidlink detection suite
+date: 2026/02/19
+tags:
+  - attack.defense_evasion
+  - attack.t1014
+  - attack.persistence
+  - voidlink
+logsource:
+  category: bpf
+  product: linux
+detection:
+  bpf_prog_load:
+    EventType: 'bpf'
+    BPFCommand:
+      - 'BPF_PROG_LOAD'
+      - 'prog_load'
+  sensitive_hooks:
+    BPFAttachTarget|contains:
+      - 'getdents64'
+      - 'tcp4_seq_show'
+      - 'tcp6_seq_show'
+      - 'udp4_seq_show'
+      - 'netlink_recvmsg'
+      - 'inet_sk_diag_fill'
+      - 'vfs_read'
+      - '__x64_sys_kill'
+  voidlink_maps:
+    BPFMapName|contains:
+      - 'sd_nl_ports'
+      - 'sd_cg_pids'
+      - 'sd_cg_names'
+  rootkit_prog_types:
+    BPFProgType|contains:
+      - 'BPF_PROG_TYPE_KPROBE'
+      - 'BPF_PROG_TYPE_TRACEPOINT'
+      - 'kprobe'
+      - 'kretprobe'
+  condition: (bpf_prog_load and sensitive_hooks) or voidlink_maps or (rootkit_prog_types and sensitive_hooks)
+falsepositives:
+  - Legitimate eBPF-based monitoring tools (Cilium, Falco, bcc-tools)
+  - Performance profiling tools using kprobes
+level: critical
+---
+title: VoidLink LKM Rootkit Loading
+id: f6a7b8c9-d0e1-2345-fabc-456789012345
+status: experimental
+description: |
+  Detects loading of a Linux kernel module with VoidLink rootkit characteristics:
+  - Module loaded from tmpfs/shmem paths (/tmp/, /dev/shm/, /var/tmp/)
+  - Module uses prctl magic 0x564C ("VL")
+  - init_module/finit_module syscall from non-standard locations
+  - Module immediately hides itself (list_del_init + kobject_del)
+references:
+  - https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits
+author: de-voidlink detection suite
+date: 2026/02/19
+tags:
+  - attack.persistence
+  - attack.t1547.006
+  - attack.defense_evasion
+  - attack.t1014
+  - voidlink
+logsource:
+  category: driver_load
+  product: linux
+detection:
+  module_load:
+    EventType: 'syscall'
+    SyscallName:
+      - 'init_module'
+      - 'finit_module'
+  suspicious_path:
+    ImageLoaded|contains:
+      - '/tmp/'
+      - '/dev/shm/'
+      - '/var/tmp/'
+      - '.font-unix'
+  ko_artifact:
+    ImageLoaded|endswith:
+      - '.tmp.ko'
+      - 'vl_stealth.ko'
+  condition: module_load and (suspicious_path or ko_artifact)
+falsepositives:
+  - Legitimate kernel module installations from /tmp during system updates
+  - DKMS builds that temporarily place modules in /tmp
+level: critical
+---
+title: VoidLink Network C2 Communication
+id: a7b8c9d0-e1f2-3456-abcd-567890123456
+status: experimental
+description: |
+  Detects network communication patterns matching VoidLink's C2 protocol:
+  - HTTP requests to VoidLink-specific API endpoints
+  - Connections from processes masquerading as kernel threads
+  - Known VoidLink C2 IP addresses
+  - Suspicious User-Agent rotation
+references:
+  - https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits
+author: de-voidlink detection suite
+date: 2026/02/19
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+  - attack.t1573.001
+  - voidlink
+logsource:
+  category: network_connection
+  product: linux
+detection:
+  c2_endpoints:
+    HttpRequestUri|contains:
+      - '/api/v2/handshake'
+      - '/api/v2/sync'
+      - '/api/v2/heartbeat'
+      - '/compile'
+      - '/stage1.bin'
+      - '/implant.bin'
+  c2_ip:
+    DestinationIp:
+      - '8.149.128.10'
+  masquerade_network:
+    Image|contains:
+      - '[kworker/'
+      - 'migration/0'
+      - 'watchdog/0'
+    EventType: 'connect'
+  condition: c2_endpoints or c2_ip or masquerade_network
+falsepositives:
+  - API endpoints with similar naming conventions
+  - Legitimate connections to Alibaba Cloud IPs
+level: high

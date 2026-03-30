@@ -1,0 +1,105 @@
+title: VoidLink Process Masquerade as Kernel Thread
+id: c3d4e5f6-a7b8-9012-cdef-123456789012
+status: experimental
+description: |
+  Detects processes masquerading as kernel worker threads using prctl(PR_SET_NAME).
+  VoidLink uses names like [kworker/0:0], [kworker/0:1], [kworker/u8:0], migration/0,
+  watchdog/0, and rcu_sched to blend in with legitimate kernel threads.
+  Key indicators:
+  - User-space process (not PID 2 descendant) with kernel thread name
+  - prctl syscall with PR_SET_NAME (option 15) setting bracket-prefixed name
+  - Process has network connections (kernel threads don't connect to external IPs)
+references:
+  - https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits
+author: de-voidlink detection suite
+date: 2026/02/19
+tags:
+  - attack.defense_evasion
+  - attack.t1036.004
+  - voidlink
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  kernel_thread_name:
+    Image|endswith:
+      - '[kworker/0:0]'
+      - '[kworker/0:1]'
+      - '[kworker/u8:0]'
+    CommandLine|contains:
+      - '[kworker/'
+      - 'migration/0'
+      - 'watchdog/0'
+      - 'rcu_sched'
+  not_real_kernel:
+    # Real kernel threads have PPID of kthreadd (PID 2).
+    # Excludes PID 0 (idle), 1 (init), 2 (kthreadd) which are legitimate kernel/init.
+    ParentImage|endswith:
+      - '/bash'
+      - '/sh'
+      - '/dash'
+      - '/zsh'
+      - '/python'
+      - '/python3'
+      - '/node'
+      - '/java'
+  prctl_rename:
+    EventType: 'syscall'
+    SyscallName: 'prctl'
+    # PR_SET_NAME = 15
+  condition: (kernel_thread_name and not_real_kernel) or (prctl_rename and kernel_thread_name)
+falsepositives:
+  - Custom monitoring scripts that rename themselves
+  - Debug tools
+level: high
+---
+title: VoidLink Security Product Enumeration
+id: d4e5f6a7-b8c9-0123-defa-234567890123
+status: experimental
+description: |
+  Detects enumeration of security product processes, which VoidLink performs to
+  assess risk and adapt its evasion strategy. VoidLink scans /proc/*/comm for:
+  falcon-sensor, SentinelAgent, cbagentd, falco, sysdig, wazuh-agent, ossec,
+  osqueryd, auditd, clamd, AliYunDun, frida-server.
+  Also detects reading TracerPid from /proc/self/status (anti-debugging).
+references:
+  - https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits
+author: de-voidlink detection suite
+date: 2026/02/19
+tags:
+  - attack.discovery
+  - attack.t1518.001
+  - attack.t1057
+  - voidlink
+logsource:
+  category: file_access
+  product: linux
+detection:
+  proc_comm_scan:
+    TargetFilename|contains:
+      - '/proc/'
+    TargetFilename|endswith:
+      - '/comm'
+      - '/cmdline'
+    # Multiple rapid accesses to different /proc/*/comm files
+  anti_debug:
+    TargetFilename:
+      - '/proc/self/status'
+    # Reading TracerPid field
+  security_tool_names:
+    TargetFilename|contains:
+      - 'falcon-sensor'
+      - 'SentinelAgent'
+      - 'cbagentd'
+      - 'falco'
+      - 'wazuh'
+      - 'ossec'
+      - 'osqueryd'
+      - 'AliYunDun'
+      - 'frida-server'
+  condition: (proc_comm_scan and security_tool_names) or anti_debug
+  timeframe: 5s
+falsepositives:
+  - Monitoring tools that enumerate running processes
+  - Container health checks scanning /proc
+level: medium

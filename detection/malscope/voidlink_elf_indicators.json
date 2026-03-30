@@ -1,0 +1,223 @@
+{
+  "schema": "malscope-elf-indicators/v1",
+  "description": "VoidLink ELF structural indicators for Malscope StaticAnalyzer",
+  "reference": [
+    "https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits",
+    "https://www.ontinue.com/resource/voidlink-dissecting-an-ai-generated-c2-implant/",
+    "https://research.checkpoint.com/2026/voidlink-the-cloud-native-malware-framework/"
+  ],
+  "indicators": [
+    {
+      "id": "VL-ELF-001",
+      "name": "no_dynamic_linker",
+      "description": "ELF has no PT_INTERP segment — statically linked binary. VoidLink is compiled with -nostdlib (Zig/C freestanding). No /lib64/ld-linux-x86-64.so.2.",
+      "severity": "high",
+      "weight": 30,
+      "check": {
+        "type": "elf_segment",
+        "condition": "PT_INTERP_absent"
+      },
+      "mitre": "T1027.002",
+      "false_positive_rate": "low",
+      "note": "Most legitimate user-space ELF binaries use the dynamic linker. Static linking without libc is a strong indicator of deliberate evasion or malware."
+    },
+    {
+      "id": "VL-ELF-002",
+      "name": "zero_plt_imports",
+      "description": "No PLT (Procedure Linkage Table) entries — binary makes raw syscalls, not libc calls. VoidLink bypasses libc entirely to avoid userspace hooking by EDRs.",
+      "severity": "high",
+      "weight": 35,
+      "check": {
+        "type": "elf_section",
+        "condition": "section_absent",
+        "targets": [".plt", ".plt.got", ".plt.sec"]
+      },
+      "mitre": "T1106",
+      "false_positive_rate": "low",
+      "note": "Absence of .plt in a non-trivial ELF binary is a strong signal. Legitimate freestanding code exists but is rare outside bootloaders and kernel modules."
+    },
+    {
+      "id": "VL-ELF-003",
+      "name": "no_libc_symbols",
+      "description": "Zero imports from libc (no read, write, malloc, printf in .dynsym). VoidLink uses raw syscall instructions to bypass userspace hooking.",
+      "severity": "high",
+      "weight": 30,
+      "check": {
+        "type": "elf_symbols",
+        "condition": "dynsym_absent_all",
+        "symbols": ["read", "write", "malloc", "free", "printf", "open", "close", "socket", "connect"]
+      },
+      "mitre": "T1106",
+      "false_positive_rate": "medium",
+      "note": "Combined with other indicators. A binary with no libc symbol imports AND that creates network connections is highly suspicious."
+    },
+    {
+      "id": "VL-ELF-004",
+      "name": "voidlink_section_names",
+      "description": "ELF section names beginning with .vl_ — VoidLink-specific linker section naming convention identified by Ontinue.",
+      "severity": "critical",
+      "weight": 90,
+      "check": {
+        "type": "elf_section",
+        "condition": "section_name_prefix",
+        "prefix": ".vl_"
+      },
+      "mitre": "T1027",
+      "false_positive_rate": "negligible",
+      "note": "VoidLink-specific. No known legitimate software uses .vl_* section names."
+    },
+    {
+      "id": "VL-ELF-005",
+      "name": "memfd_create_symbol_reference",
+      "description": "String 'memfd_create' present in binary but not as a dynamic import (used as a direct syscall invocation reference or log string). Fileless execution indicator.",
+      "severity": "high",
+      "weight": 40,
+      "check": {
+        "type": "string_in_rodata",
+        "condition": "string_present",
+        "value": "memfd_create"
+      },
+      "mitre": "T1027.011",
+      "false_positive_rate": "low",
+      "note": "Presence as a string literal (e.g., for logging) combined with direct syscall number 319 in .text is a strong indicator of fileless execution technique."
+    },
+    {
+      "id": "VL-ELF-006",
+      "name": "execveat_symbol_reference",
+      "description": "String 'execveat' present in binary — references syscall 322 used for executing code from anonymous file descriptors (AT_EMPTY_PATH pattern).",
+      "severity": "high",
+      "weight": 35,
+      "check": {
+        "type": "string_in_rodata",
+        "condition": "string_present",
+        "value": "execveat"
+      },
+      "mitre": "T1106",
+      "false_positive_rate": "low"
+    },
+    {
+      "id": "VL-ELF-007",
+      "name": "zig_compiler_artifact",
+      "description": "Zig-compiled binary: presence of characteristic Zig panic/overflow strings. VoidLink (and de-voidlink) are Zig-compiled. Combined with other indicators, confirms implant lineage.",
+      "severity": "medium",
+      "weight": 15,
+      "check": {
+        "type": "string_any",
+        "condition": "string_present_any",
+        "values": ["reached unreachable", "integer overflow", "index out of bounds", "panic: "]
+      },
+      "mitre": "T1059",
+      "false_positive_rate": "medium",
+      "note": "Alone this is not sufficient — many benign Zig programs exist. Strong when combined with network/syscall indicators."
+    },
+    {
+      "id": "VL-ELF-008",
+      "name": "prctl_magic_bytes",
+      "description": "Magic bytes 0x564C ('VL') present in binary — VoidLink PRCTL_MAGIC constant used to signal the implant has performed its prctl masquerade step.",
+      "severity": "critical",
+      "weight": 75,
+      "check": {
+        "type": "byte_pattern",
+        "condition": "bytes_present_in_text",
+        "pattern": "4C56",
+        "note": "Little-endian encoding of 0x564C. Search within .text/.rodata sections."
+      },
+      "mitre": "T1036.004",
+      "false_positive_rate": "low"
+    },
+    {
+      "id": "VL-ELF-009",
+      "name": "high_section_entropy",
+      "description": "ELF section entropy >= 7.0/8.0. VoidLink measured at 7.24/8.0 by Ontinue — high entropy indicates encrypted or compressed content consistent with runtime decryption.",
+      "severity": "high",
+      "weight": 25,
+      "check": {
+        "type": "entropy",
+        "condition": "section_entropy_gte",
+        "threshold": 7.0,
+        "sections": [".text", ".rodata", ".data"]
+      },
+      "mitre": "T1027.002",
+      "false_positive_rate": "medium",
+      "note": "High entropy alone is insufficient. Must be combined with other VoidLink indicators."
+    },
+    {
+      "id": "VL-ELF-010",
+      "name": "syscall_number_319_in_text",
+      "description": "Raw syscall number 319 (memfd_create) appears as an immediate value in .text section — confirms direct syscall invocation pattern used by VoidLink to bypass libc hooks.",
+      "severity": "critical",
+      "weight": 70,
+      "check": {
+        "type": "byte_pattern",
+        "condition": "bytes_present_in_section",
+        "section": ".text",
+        "pattern": "3F010000",
+        "note": "Little-endian encoding of 319 (0x13F). Pattern: C7 C0 3F 01 00 00 (mov eax, 319) or similar mov variants."
+      },
+      "mitre": "T1106",
+      "false_positive_rate": "low"
+    },
+    {
+      "id": "VL-ELF-011",
+      "name": "syscall_number_322_in_text",
+      "description": "Raw syscall number 322 (execveat) appears as an immediate value in .text section — confirms fileless execution technique.",
+      "severity": "critical",
+      "weight": 70,
+      "check": {
+        "type": "byte_pattern",
+        "condition": "bytes_present_in_section",
+        "section": ".text",
+        "pattern": "42010000",
+        "note": "Little-endian encoding of 322 (0x142)."
+      },
+      "mitre": "T1106",
+      "false_positive_rate": "low"
+    },
+    {
+      "id": "VL-ELF-012",
+      "name": "plugin_api_symbols_in_binary",
+      "description": "plugin_init, plugin_exec, plugin_cleanup, plugin_info strings present in binary — VoidLink/de-voidlink plugin architecture strings from plugin_api.h, used by ELF .o loader.",
+      "severity": "high",
+      "weight": 50,
+      "check": {
+        "type": "string_count",
+        "condition": "string_present_n_of",
+        "n": 3,
+        "values": ["plugin_init", "plugin_exec", "plugin_cleanup", "plugin_info"]
+      },
+      "mitre": "T1129",
+      "false_positive_rate": "low",
+      "note": "3+ of 4 plugin API strings present is highly specific to VoidLink's modular plugin architecture."
+    }
+  ],
+  "composite_rules": [
+    {
+      "id": "VL-COMP-001",
+      "name": "voidlink_core_implant",
+      "description": "Composite rule: statically-linked binary with direct syscalls for fileless execution",
+      "trigger": "indicators_score_gte",
+      "threshold_score": 100,
+      "indicators": ["VL-ELF-001", "VL-ELF-002", "VL-ELF-005", "VL-ELF-006"],
+      "severity": "critical",
+      "confidence": "high"
+    },
+    {
+      "id": "VL-COMP-002",
+      "name": "voidlink_confirmed_by_magic",
+      "description": "Composite rule: VoidLink confirmed by magic bytes + Zig compiler + plugin API",
+      "trigger": "all_indicators_present",
+      "indicators": ["VL-ELF-007", "VL-ELF-008", "VL-ELF-012"],
+      "severity": "critical",
+      "confidence": "very_high"
+    },
+    {
+      "id": "VL-COMP-003",
+      "name": "voidlink_fileless_execution_capability",
+      "description": "Composite rule: binary has the raw syscall numbers for memfd_create + execveat fileless execution",
+      "trigger": "all_indicators_present",
+      "indicators": ["VL-ELF-010", "VL-ELF-011"],
+      "severity": "critical",
+      "confidence": "very_high"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+title: VoidLink Fileless Execution Syscall Sequence
+id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+status: experimental
+description: |
+  Detects VoidLink's characteristic syscall sequence for fileless execution:
+  fork(57) → prctl(157) → socket(41) → connect(42) → recvfrom(45) →
+  memfd_create(319) → write(1) → execveat(322).
+  This sequence creates a child process, masquerades it, connects to C2,
+  downloads a payload, writes it to an anonymous memory-backed file descriptor,
+  and executes it without touching disk.
+references:
+  - https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits
+  - https://research.checkpoint.com/2026/voidlink-the-cloud-native-malware-framework/
+author: de-voidlink detection suite
+date: 2026/02/19
+tags:
+  - attack.execution
+  - attack.t1059.004
+  - attack.t1106
+  - attack.defense_evasion
+  - attack.t1027.011
+  - voidlink
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  # Phase 1: Fork + process masquerade
+  fork_masquerade:
+    EventType: 'syscall'
+    SyscallName|contains:
+      - 'clone'
+      - 'fork'
+    CommandLine|contains:
+      - '[kworker/'
+      - 'migration/'
+      - 'watchdog/'
+      - 'rcu_sched'
+  # Phase 2: Socket creation + C2 connection
+  socket_connect:
+    EventType: 'syscall'
+    SyscallName:
+      - 'socket'
+      - 'connect'
+  # Phase 3: Fileless execution via memfd_create
+  fileless_exec:
+    EventType: 'syscall'
+    SyscallName:
+      - 'memfd_create'
+    # execveat with AT_EMPTY_PATH (0x1000)
+  execveat_empty:
+    EventType: 'syscall'
+    SyscallName:
+      - 'execveat'
+  condition: fork_masquerade and socket_connect and (fileless_exec or execveat_empty)
+  timeframe: 30s
+falsepositives:
+  - Legitimate use of memfd_create for shared memory (rare in combination with execveat)
+  - Container runtimes that use memfd for binary loading
+level: critical
+---
+title: VoidLink memfd_create Fileless Execution
+id: b2c3d4e5-f6a7-8901-bcde-f12345678901
+status: experimental
+description: |
+  Detects the specific pattern of memfd_create("", MFD_CLOEXEC) followed by
+  execveat(fd, "", argv, envp, AT_EMPTY_PATH). This is the core fileless
+  execution technique used by VoidLink. The empty name argument to memfd_create
+  and AT_EMPTY_PATH flag to execveat are strong indicators.
+  Equivalent to Sysdig Falco rule from the TRT report.
+references:
+  - https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits
+author: de-voidlink detection suite (adapted from Sysdig Falco rule)
+date: 2026/02/19
+tags:
+  - attack.defense_evasion
+  - attack.t1027.011
+  - voidlink
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  memfd_exec:
+    ParentImage|contains: 'memfd:'
+    Image|contains: 'memfd:'
+  fd_path:
+    CommandLine|contains:
+      - '/proc/self/fd/'
+      - 'memfd:'
+  condition: memfd_exec or fd_path
+falsepositives:
+  - JIT compilers using memfd for code generation
+  - Some container runtimes
+level: critical

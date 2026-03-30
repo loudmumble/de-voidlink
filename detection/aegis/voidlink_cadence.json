@@ -1,0 +1,113 @@
+{
+  "name": "VoidLink C2 Beaconing Profile",
+  "version": "1.0.0",
+  "description": "Detection profile for VoidLink's adaptive C2 beaconing patterns. VoidLink uses risk-score-driven timing with two profiles: aggressive (no EDR) and paranoid (EDR detected). Aegis should match on inter-arrival time regularity and HTTP pattern characteristics.",
+  "framework": "VoidLink",
+  "threat_actor": "UAT-9921",
+  "references": [
+    "https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits",
+    "https://research.checkpoint.com/2026/voidlink-the-cloud-native-malware-framework/",
+    "https://blog.talosintelligence.com/voidlink/"
+  ],
+  "profiles": {
+    "aggressive": {
+      "description": "VoidLink beaconing when no EDR/security products detected",
+      "base_interval_ms": 4096,
+      "min_interval_ms": 1000,
+      "jitter_percent": 20,
+      "expected_iat_range_ms": [3277, 4915],
+      "regularity_threshold": 0.85,
+      "notes": "High regularity — low jitter makes cadence detection easier"
+    },
+    "paranoid": {
+      "description": "VoidLink beaconing when EDR products detected (evasion mode)",
+      "base_interval_ms": 1024,
+      "min_interval_ms": 5000,
+      "jitter_percent": 30,
+      "expected_iat_range_ms": [717, 6500],
+      "regularity_threshold": 0.65,
+      "notes": "Higher jitter to evade cadence analysis — wider IAT distribution"
+    }
+  },
+  "transport_signatures": {
+    "http_camouflage_modes": [
+      {
+        "mode": "png",
+        "content_type": "image/png",
+        "indicator": "Periodic PNG downloads with consistent sizes from single endpoint",
+        "detection": "Check if PNG IDAT chunk size varies unnaturally or contains non-image entropy"
+      },
+      {
+        "mode": "javascript",
+        "content_type": "application/javascript",
+        "indicator": "JS file downloads at regular intervals not triggered by page loads",
+        "detection": "JavaScript responses with base64-encoded data in variable assignments"
+      },
+      {
+        "mode": "css",
+        "content_type": "text/css",
+        "indicator": "CSS file requests with no associated HTML page load",
+        "detection": "CSS responses containing base64 data in comments"
+      },
+      {
+        "mode": "api",
+        "content_type": "application/json",
+        "indicator": "JSON API calls with regular cadence and consistent payload sizes",
+        "detection": "Regular API polling with encrypted/encoded data field"
+      }
+    ],
+    "user_agents": [
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0",
+      "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "curl/8.4.0"
+    ],
+    "user_agent_rotation": "per-request",
+    "note": "User-Agent rotation itself is a signal — legitimate clients don't change UA per request"
+  },
+  "network_indicators": {
+    "c2_endpoints": [
+      "/api/v2/handshake",
+      "/api/v2/sync",
+      "/api/v2/heartbeat",
+      "/compile",
+      "/stage1.bin",
+      "/implant.bin"
+    ],
+    "c2_port": 8080,
+    "known_c2_ips": ["8.149.128.10"],
+    "protocol": "HTTPS",
+    "encryption": "AES-256-GCM",
+    "fallback_transports": ["websocket", "dns_tunnel", "icmp"]
+  },
+  "detection_strategies": {
+    "iat_analysis": {
+      "description": "Analyze inter-arrival times of outbound HTTP requests to same destination",
+      "method": "Calculate coefficient of variation (CV) of IAT series. Low CV (<0.3) with base interval matching profiles indicates beaconing.",
+      "aggressive_cv_range": [0.15, 0.25],
+      "paranoid_cv_range": [0.25, 0.40]
+    },
+    "ua_rotation": {
+      "description": "Detect User-Agent string rotation from single source IP",
+      "method": "Track UA strings per source IP. Flag if >3 distinct UAs seen within 5-minute window."
+    },
+    "content_type_mismatch": {
+      "description": "Detect HTTP responses where Content-Type doesn't match actual content",
+      "method": "Entropy analysis of response bodies. PNG/JS/CSS with high entropy (>7.0) suggests encrypted C2 payload."
+    },
+    "session_fingerprinting": {
+      "description": "Correlate handshake → heartbeat → sync request chain",
+      "method": "Flag sessions that follow exact VoidLink endpoint sequence within short timeframe."
+    }
+  },
+  "mitre_mapping": {
+    "tactics": ["command-and-control", "defense-evasion"],
+    "techniques": [
+      {"id": "T1071.001", "name": "Application Layer Protocol: Web Protocols"},
+      {"id": "T1573.001", "name": "Encrypted Channel: Symmetric Cryptography"},
+      {"id": "T1008", "name": "Fallback Channels"},
+      {"id": "T1095", "name": "Non-Application Layer Protocol"},
+      {"id": "T1132.001", "name": "Data Encoding: Standard Encoding"}
+    ]
+  }
+}

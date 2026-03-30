@@ -1,0 +1,169 @@
+{
+  "schema": "malscope-behavioral-profile/v1",
+  "description": "VoidLink behavioral profile for Malscope sandbox/dynamic analysis integration",
+  "family": "VoidLink",
+  "subfamily": "de-voidlink (adversary simulation)",
+  "threat_classification": "APT-C2-Implant",
+  "first_seen": "2026-01-01",
+  "reference": [
+    "https://www.sysdig.com/blog/voidlink-threat-analysis-sysdig-discovers-c2-compiled-kernel-rootkits",
+    "https://www.ontinue.com/resource/voidlink-dissecting-an-ai-generated-c2-implant/",
+    "https://research.checkpoint.com/2026/voidlink-the-cloud-native-malware-framework/"
+  ],
+
+  "execution_phases": [
+    {
+      "phase": 1,
+      "name": "process_masquerade",
+      "description": "VoidLink forks a child process and renames it via prctl(PR_SET_NAME) to a kernel thread name to blend in with legitimate system processes.",
+      "syscalls": [
+        {"nr": 57, "name": "fork", "note": "Creates child process for sequence execution"},
+        {"nr": 157, "name": "prctl", "arg0": 15, "note": "PR_SET_NAME=15, sets name to [kworker/0:0] or similar"}
+      ],
+      "detection_window": "pre_compromise",
+      "severity": "high",
+      "indicators": [
+        "User-space process with PID > 1 has kernel thread name",
+        "prctl(PR_SET_NAME) with bracketed name",
+        "Parent is not kthreadd (PID 2)"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "c2_beacon",
+      "description": "Child process opens a TCP socket and connects to the C2 server, then receives the payload.",
+      "syscalls": [
+        {"nr": 41, "name": "socket", "args": [2, 1, 0], "note": "AF_INET, SOCK_STREAM, 0"},
+        {"nr": 42, "name": "connect", "note": "Connect to C2 server"},
+        {"nr": 45, "name": "recvfrom", "note": "Receive encrypted payload"}
+      ],
+      "protocol": {
+        "transport": "HTTP/1.1 over raw TCP",
+        "encryption": "AES-256-GCM (VoidStream)",
+        "camouflage": ["image/png (IDAT chunk)", "application/javascript", "text/css", "text/html", "application/json"],
+        "beaconing": {
+          "aggressive_interval_ms": 4096,
+          "paranoid_interval_ms": 1024,
+          "jitter_percent": {"aggressive": 20, "paranoid": 30}
+        }
+      },
+      "detection_window": "pre_compromise",
+      "severity": "critical",
+      "indicators": [
+        "Kernel-named process making outbound TCP connections",
+        "HTTP traffic with rotating Content-Type headers",
+        "Base64-encoded content in image/png or CSS responses",
+        "Regular interval beaconing with ±20% jitter"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "fileless_execution",
+      "description": "VoidLink writes received payload to an anonymous memory-backed file (memfd_create) and executes it via execveat with AT_EMPTY_PATH, leaving no trace on disk.",
+      "syscalls": [
+        {"nr": 319, "name": "memfd_create", "args": ["''", 1], "note": "Empty name, MFD_CLOEXEC=1"},
+        {"nr": 1, "name": "write", "note": "Write payload to anonymous fd"},
+        {"nr": 322, "name": "execveat", "args": ["memfd", "''", "NULL", "NULL", "0x1000"], "note": "AT_EMPTY_PATH=0x1000"}
+      ],
+      "detection_window": "at_execution",
+      "severity": "critical",
+      "indicators": [
+        "memfd_create with empty name string",
+        "execveat with AT_EMPTY_PATH flag",
+        "Process ancestry: /proc/<pid>/exe points to memfd: path",
+        "No file on disk corresponding to running process"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "plugin_loading",
+      "description": "VoidLink's beacon loop loads ET_REL ELF .o plugin files from a local directory and executes them via a custom ELF relocator. Plugins run: recon, cred_harvest, persist.",
+      "detection_window": "post_compromise",
+      "severity": "critical",
+      "indicators": [
+        "mmap with PROT_READ|PROT_EXEC on .o file content",
+        "mprotect setting executable permissions on mmap'd region",
+        "ET_REL ELF objects (type=1) present in filesystem",
+        "Rapid read() calls on multiple .o files from same process"
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "edr_enumeration",
+      "description": "VoidLink scans /proc/*/comm to detect security products and adjusts its beaconing profile accordingly (aggressive if no EDR, paranoid if EDR detected).",
+      "detection_window": "pre_compromise",
+      "severity": "medium",
+      "indicators": [
+        "Rapid sequential reads of /proc/*/comm files",
+        "Read of /proc/self/status (TracerPid anti-debug)",
+        "Process scanning 12+ security tool names in under 1 second"
+      ]
+    }
+  ],
+
+  "network_iocs": {
+    "c2_endpoints": [
+      "POST /api/v2/handshake",
+      "POST /api/v2/sync",
+      "GET /api/v2/heartbeat",
+      "POST /compile",
+      "GET /stage1.bin",
+      "GET /implant.bin"
+    ],
+    "user_agent": "phantom-beacon/1.0",
+    "headers": [
+      "X-Session-ID: <uuid>",
+      "Connection: close",
+      "Content-Type: application/json"
+    ],
+    "response_camouflage_types": [
+      "image/png",
+      "application/javascript",
+      "text/css",
+      "text/html",
+      "application/json"
+    ]
+  },
+
+  "file_system_iocs": {
+    "artifacts": [
+      {"path": "/proc/self/fd/<n>", "note": "memfd execution — process exe link points here"},
+      {"path": "*.o", "note": "ET_REL plugin specimens (recon.o, cred_harvest.o, persist.o)"}
+    ],
+    "notable_absence": [
+      "No binary written to disk (fileless execution)",
+      "No persistence files created (benign mode: enumeration only)"
+    ]
+  },
+
+  "syscall_sequence_fingerprint": {
+    "description": "The definitive VoidLink detection sequence — all 8 syscalls in this order within 30 seconds is a confirmed VoidLink indicator",
+    "sequence": [57, 157, 41, 42, 45, 319, 1, 322],
+    "names":   ["fork", "prctl", "socket", "connect", "recvfrom", "memfd_create", "write", "execveat"],
+    "timeframe_seconds": 30,
+    "confidence": "critical",
+    "mitre": ["T1106", "T1036.004", "T1027.011", "T1071.001"]
+  },
+
+  "malscope_integration": {
+    "analyzer_class": "malscope.analyzers.static.StaticAnalyzer",
+    "config_keys": {
+      "yara_rules_dir": "detection/yara/",
+      "elf_indicators_file": "detection/malscope/voidlink_elf_indicators.json",
+      "ioc_strings_file": "detection/malscope/voidlink_ioc_strings.json",
+      "behavioral_profile": "detection/malscope/voidlink_behavioral_profile.json"
+    },
+    "expected_suspicious_indicators": [
+      "no_dynamic_linker",
+      "zero_plt_imports",
+      "memfd_create_symbol_reference",
+      "execveat_symbol_reference",
+      "plugin_api_symbols_in_binary",
+      "c2_endpoints (2+ matched)",
+      "process_masquerade_names (1+ matched)",
+      "fileless_execution_strings (2+ matched)"
+    ],
+    "minimum_indicator_count_for_detection": 3,
+    "minimum_yara_matches_for_detection": 1
+  }
+}
