@@ -123,11 +123,11 @@ rule VoidLink_ICMP_Covert_Channel {
         $cmd_self_destruct = "SELF_DESTRUCT" ascii
         $cmd_hide_ip = "HIDE_IP" ascii
 
-        /* Command byte values */
-        $cmd_byte_01 = { 01 }  /* HIDE_PID */
-        $cmd_byte_02 = { 02 }  /* HIDE_PORT */
-        $cmd_byte_fe = { FE }  /* SELF_DESTRUCT */
-        $cmd_byte_ff = { FF }  /* CLEAR */
+        /* Command byte values (padded with ICMP magic prefix 0xC0DE for anchoring) */
+        $cmd_byte_01 = { C0 DE 01 }  /* magic + HIDE_PID */
+        $cmd_byte_02 = { C0 DE 02 }  /* magic + HIDE_PORT */
+        $cmd_byte_fe = { C0 DE FE }  /* magic + SELF_DESTRUCT */
+        $cmd_byte_ff = { C0 DE FF }  /* magic + CLEAR */
 
         /* Python ICMP control script indicators */
         $scapy_import = "from scapy" ascii

@@ -21,7 +21,7 @@ rule VoidLink_Stage0_Dropper {
 
     strings:
         /* memfd_create syscall — fileless execution signature */
-        $memfd_name = { 00 00 }  /* empty string arg to memfd_create("", MFD_CLOEXEC) */
+        $memfd_name = "memfd_create" ascii  /* memfd_create function reference */
 
         /* XOR encoding key used for C2 config */
         $xor_key = { AA AA AA AA }

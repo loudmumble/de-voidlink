@@ -142,7 +142,6 @@ make info       # Show component overview
 
 | Document | Description |
 |----------|-------------|
-| [`docs/INTERNAL.md`](docs/INTERNAL.md) | Internal developer guide — architecture, VoidStream crypto, camouflage system, plugin loader, payload swap points |
 | [`docs/OPERATOR_GUIDE.md`](docs/OPERATOR_GUIDE.md) | Operator guide — building, configuring, running, writing custom plugins, detection rules |
 | [`SAFETY.md`](SAFETY.md) | Safety controls and responsible use policy |
 
